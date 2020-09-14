@@ -34,9 +34,13 @@
 ; DONE - p1 down, up
 ; DONE - generalize player input
 ; 3. -- draw ball
-; - set x-position (fine)
-; - draw at y-position
+; DONE - set x-position (fine)
+; DONE - draw at y-position
+; 3a. -- refactor player x-pos offset
+; DONE - create general subroutine for settings x-pos offset
+; - use it directly after vblank
 ; 4. -- move ball
+; - velocity
 ; 5. -- handle ball collisions with top, bottom, left, right
 ; 6. -- handle collisions between p0,p1 and ball
 ;===========================================================================
@@ -52,6 +56,8 @@
 ;-----------------------------------------------------------------------
 ScanlineCount .byte         ; number of visible scanlines
 
+Player0X .byte              ; P0 x-position
+Player1X .byte              ; P1 x-position
 Player0Y .byte              ; P0 y-position
 Player1Y .byte              ; P1 y-position
 
@@ -64,11 +70,13 @@ BallY .byte                 ; ball y-position
 SCANLINE_COUNT = 96         ; 2-line kernel; 192 / 2 = 96
 
 PLAYER_HEIGHT = 16
+PLAYER_0_X_INIT = 0        ; initial P0 x-position
+PLAYER_1_X_INIT = 80       ; initial P1 x-position
 PLAYER_Y_INIT = 47          ; the initial y-position in pixels
 PLAYER_SPRITE = %00000111
 
 BALL_HEIGHT = 5
-BALL_X_INIT = 32            ; the initial x-position in pixels
+BALL_X_INIT = 0            ; the initial x-position in pixels
 BALL_SIZE = %00101000       ; 3 pixels
 
 COLOR_WHITE = $0e
@@ -93,13 +101,22 @@ Start:
     sta Player1Y
     sta BallY
 
-    lda #BALL_X_INIT        ; set default x-position
+    lda #PLAYER_0_X_INIT    ; set player default x-position
+    sta Player0X
+    lda #PLAYER_1_X_INIT
+    sta Player1X
+
+    lda #BALL_X_INIT        ; set ball default x-position
     sta BallX
 
     lda #COLOR_PURPLE       ; set player colors
     sta COLUP0
     lda #COLOR_YELLOW
     sta COLUP1
+    lda #COLOR_BLUE         ; set background color
+    sta COLUBK
+    lda #COLOR_WHITE        ; set ball color
+    sta COLUPF
 
 NextFrame:
     lsr SWCHB               ; handle game reset
@@ -131,37 +148,31 @@ OutputVBlank:
     lda #0                  ; disable VBLANK
     sta VBLANK
 
-    sta HMCLR               ; reset previous fine x-position(s)
+    ;sta WSYNC
+    ;sta HMCLR               ; reset previous fine x-position(s)
 
-; TODO: -- refactor into a general subroutine for setting x of any object
-SetBallXPosition:
-    lda BallX
-    sec                     ; set carry flag before subtract
-.Divide15Loop:
-    sbc #15                 ; subtract 15 (TIA clocks) from A
-    bcs .Divide15Loop       ; loop until carry flag no longer set
-    eor #7                  ; adjust remainder in A between -8 and 7 using XOR
-    asl                     ; bit-shift left 4 times, as HMBL uses left-most 4 bits
-    asl
-    asl
-    asl
-    sta HMBL                ; set ball fine x offset
-    sta RESBL               ; set ball's coarse x offset
+;-----------------------------------------------------------------------
+; Set horizontal offsets for all motion objects
+;-----------------------------------------------------------------------
+    lda Player0X            ; handle P0 x-position
+    ldx #0
+    jsr HandleObjXPosition
+
+    lda Player1X            ; handle P1 x-position
+    ldx #1
+    jsr HandleObjXPosition
+
+    lda BallX               ; handle ball x-position
+    ldx #4
+    jsr HandleObjXPosition
+
+    sta WSYNC               ; sync scanline before setting horizontal registers
+    sta HMOVE               ; enable *all* horizontal motion registers (HM__)
 
 ;===========================================================================
 ; Visible scanlines
 ;===========================================================================
 DrawGame:
-    ; Refactor this: -- we need to use fine positioning instead of sleep!
-    SLEEP 16                ; set P0 x-position
-    sta RESP0
-
-    SLEEP 32                ; set P1 x-position
-    sta RESP1
-
-    lda #COLOR_BLUE         ; set background color
-    sta COLUBK
-
     lda #1                  ; delay drawing of P0 until P1 is drawn
     sta VDELP0
 
@@ -171,7 +182,6 @@ VisibleScanlines:
     jsr HandlePlayerDraw    ; 6
     sta WSYNC               ; scanline (1 of 2) we sync after because we want
                             ; P0 and P1 to be drawn on the same line
-
     lda ScanlineCount       ; restore scanline value for next player draw
     ldx #1                  ; draw P1
     jsr HandlePlayerDraw    ; 6
@@ -191,9 +201,8 @@ HandleBallDraw:
     sta CTRLPF
     tya                     ; transfer graphics enable value to A
     sta ENABL               ; enable ball graphic
-    sta WSYNC               ; draw scanline (2 of 2)
 
-    ;sta HMOVE              ; where does HMOVE get called??
+    sta WSYNC               ; draw scanline (2 of 2)
 
     dec ScanlineCount       ; decrement visible scanline count
     lda ScanlineCount       ; load updated scanline count
@@ -272,71 +281,30 @@ HandlePlayerInput subroutine
 .HandleNoInput:
     rts
 
+;-----------------------------------------------------------------------
+; Handle motion object x-position with fine offset
+; A is desired x-position in pixels
+; X is type of object (0 = P0, 1 = P1, 2 = M0, 3 = M3, 4 = Ball)
+;-----------------------------------------------------------------------
+HandleObjXPosition subroutine
+    sta WSYNC               ; we want to do this work during the h-blank period
+    sec                     ; ensure carry flag is set for subtraction
+.DivideBy15Clocks:
+    sbc #15                 ; subtract 15 TIA clocks (5 CPU cycles) from A
+    bcs .DivideBy15Clocks   ; loop until negative
+    eor #7                  ; adjust remainder between -8 and +7 using XOR
+    asl                     ; bit-shift left 4 times, as HM__ uses left-most nibble
+    asl
+    asl
+    asl
+    sta HMP0,x              ; set fine x-position for object x
+    sta RESP0,x             ; set coarse x-position for object x
+    rts
+
 ;===========================================================================
 ; Data
 ;===========================================================================
-
-Digits:
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01010101          ; # # # #
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %01110111          ; ### ###
-    .byte %01000100          ; #   #
-    .byte %01110111          ; ### ###
-
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %00110011          ;  ##  ##
-    .byte %00010001          ;   #   #
-    .byte %01110111          ; ### ###
-
-    .byte %01010101          ; # # # #
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-
-    .byte %01110111          ; ### ###
-    .byte %01000100          ; #   #
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %01110111          ; ### ###
-
-    .byte %01110111          ; ### ###
-    .byte %01000100          ; #   #
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %01110111          ; ### ###
-
+; TODO -- scoreboard digits
 ;===========================================================================
 ; Complete ROM
 ;===========================================================================
