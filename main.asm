@@ -3,8 +3,8 @@
 ;===========================================================================
 ; Include required files
 ;===========================================================================
-    include "include/vcs.h"
-    include "include/macro.h"
+    .include "include/vcs.h"
+    .include "include/macro.h"
 
 ;===========================================================================
 ; Pong
@@ -38,7 +38,7 @@
 ; DONE - draw at y-position
 ; 3a. -- refactor player x-pos offset
 ; DONE - create general subroutine for settings x-pos offset
-; - use it directly after vblank
+; DONE - use it directly after vblank
 ; 4. -- move ball
 ; - velocity
 ; 5. -- handle ball collisions with top, bottom, left, right
@@ -70,13 +70,13 @@ BallY .byte                 ; ball y-position
 SCANLINE_COUNT = 96         ; 2-line kernel; 192 / 2 = 96
 
 PLAYER_HEIGHT = 16
-PLAYER_0_X_INIT = 0        ; initial P0 x-position
-PLAYER_1_X_INIT = 80       ; initial P1 x-position
+PLAYER_0_X_INIT = 0         ; initial P0 x-position
+PLAYER_1_X_INIT = 120       ; initial P1 x-position
 PLAYER_Y_INIT = 47          ; the initial y-position in pixels
 PLAYER_SPRITE = %00000111
 
 BALL_HEIGHT = 5
-BALL_X_INIT = 0            ; the initial x-position in pixels
+BALL_X_INIT = 0             ; the initial x-position in pixels
 BALL_SIZE = %00101000       ; 3 pixels
 
 COLOR_WHITE = $0e
@@ -96,142 +96,159 @@ Start:
 ;-----------------------------------------------------------------------
 ; Initialize variables
 ;-----------------------------------------------------------------------
-    lda #PLAYER_Y_INIT      ; set default y-position
-    sta Player0Y
-    sta Player1Y
-    sta BallY
+    lda #PLAYER_Y_INIT      ; 2, set default y-position
+    sta Player0Y            ; 3
+    sta Player1Y            ; 3
+    sta BallY               ; 3
 
-    lda #PLAYER_0_X_INIT    ; set player default x-position
-    sta Player0X
-    lda #PLAYER_1_X_INIT
-    sta Player1X
+    lda #PLAYER_0_X_INIT    ; 2, set player default x-position
+    sta Player0X            ; 3
+    lda #PLAYER_1_X_INIT    ; 2
+    sta Player1X            ; 3
 
-    lda #BALL_X_INIT        ; set ball default x-position
-    sta BallX
+    lda #BALL_X_INIT        ; 2, set ball default x-position
+    sta BallX               ; 3
 
-    lda #COLOR_PURPLE       ; set player colors
-    sta COLUP0
-    lda #COLOR_YELLOW
-    sta COLUP1
-    lda #COLOR_BLUE         ; set background color
-    sta COLUBK
-    lda #COLOR_WHITE        ; set ball color
-    sta COLUPF
+    lda #COLOR_PURPLE       ; 2, set player colors
+    sta COLUP0              ; 3
+    lda #COLOR_YELLOW       ; 2
+    sta COLUP1              ; 3
+    lda #COLOR_WHITE        ; 2, set ball color
+    sta COLUPF              ; 3
+
+;-----------------------------------------------------------------------
+; Init x offsets for all motion objects (144)
+;-----------------------------------------------------------------------
+    sta WSYNC               ; 3, clear horiz. motion registers
+    sta HMCLR               ; 3
+
+    lda Player0X            ; 3, handle P0 x-position
+    ldx #0                  ; 2
+    jsr HandleObjXPosition  ; 39
+
+    lda Player1X            ; 3, handle P1 x-position
+    ldx #1                  ; 2
+    jsr HandleObjXPosition  ; 39
+
+    lda BallX               ; 3, handle ball x-position
+    ldx #4                  ; 2
+    jsr HandleObjXPosition  ; 39
+
+    sta WSYNC               ; 3, sync scanline before setting horizontal registers
+    sta HMOVE               ; 3, apply *all* horizontal motion registers (HM__)
 
 NextFrame:
-    lsr SWCHB               ; handle game reset
-    bcc Start
+    lsr SWCHB               ; 5?, handle game reset
+    bcc Start               ; 2
 
-    lda #SCANLINE_COUNT     ; reset visible scanline count
-    sta ScanlineCount
+    lda #SCANLINE_COUNT     ; 2, reset visible scanline count
+    sta ScanlineCount       ; 3
+
+    lda #COLOR_BLUE         ; 2, set background color
+    sta COLUBK              ; 3
 
 ;===========================================================================
 ; Output VSync, VBlank
 ;===========================================================================
-    lda #2                  ; enable VBLANK, VSYNC
-    sta VBLANK
-    sta VSYNC
+    lda #2                  ; 2, enable VBLANK, VSYNC
+    sta VBLANK              ; 3
+    sta VSYNC               ; 3
 
-    sta WSYNC               ; generate 3 lines of VSYNC
-    sta WSYNC
-    sta WSYNC
+    sta WSYNC               ; 3, generate 3 lines of VSYNC
+    sta WSYNC               ; 3
+    sta WSYNC               ; 3
 
-    lda #0                  ; disable VSYNC
-    sta VSYNC
+    lda #0                  ; 2, disable VSYNC
+    sta VSYNC               ; 3
 
-    ldx #37
+    ldx #37                 ; 2
 OutputVBlank:
-    sta WSYNC
-    dex
-    bne OutputVBlank
+    sta WSYNC               ; 3
+    dex                     ; 2
+    bne OutputVBlank        ; 2
 
-    lda #0                  ; disable VBLANK
-    sta VBLANK
-
-    ;sta WSYNC
-    ;sta HMCLR               ; reset previous fine x-position(s)
-
-;-----------------------------------------------------------------------
-; Set horizontal offsets for all motion objects
-;-----------------------------------------------------------------------
-    lda Player0X            ; handle P0 x-position
-    ldx #0
-    jsr HandleObjXPosition
-
-    lda Player1X            ; handle P1 x-position
-    ldx #1
-    jsr HandleObjXPosition
-
-    lda BallX               ; handle ball x-position
-    ldx #4
-    jsr HandleObjXPosition
-
-    sta WSYNC               ; sync scanline before setting horizontal registers
-    sta HMOVE               ; enable *all* horizontal motion registers (HM__)
-
+    lda #0                  ; 2, disable VBLANK
+    sta VBLANK              ; 3
 ;===========================================================================
 ; Visible scanlines
 ;===========================================================================
 DrawGame:
-    lda #1                  ; delay drawing of P0 until P1 is drawn
-    sta VDELP0
-
-    lda ScanlineCount       ; load visible scanline count
-VisibleScanlines:
-    ldx #0                  ; draw P0
-    jsr HandlePlayerDraw    ; 6
-    sta WSYNC               ; scanline (1 of 2) we sync after because we want
+    lda ScanlineCount       ; 3, load visible scanline count
+VisibleScanlines:           ; 78
+    ldx #0                  ; 2, draw P0
+    jsr HandlePlayerDraw    ; 34
+    sta WSYNC               ; 3, scanline (1 of 2) we sync after because we want
                             ; P0 and P1 to be drawn on the same line
-    lda ScanlineCount       ; restore scanline value for next player draw
-    ldx #1                  ; draw P1
-    jsr HandlePlayerDraw    ; 6
+    lda ScanlineCount       ; 3, restore scanline value for next player draw
+    ldx #1                  ; 2, draw P1
+    jsr HandlePlayerDraw    ; 34
 
-    lda ScanlineCount       ; load current scanline
+    lda ScanlineCount       ; 3, load current scanline
 HandleBallDraw:
-    ldx #BALL_SIZE          ; load ball width in X
-    ldy %00000010           ; load ball graphics enable value in Y
-    sec                     ; set carry flag before subtract
-    sbc BallY               ; subtract ball y-position from current scanline count
-    cmp #BALL_HEIGHT        ; is ball found in scanline?
-    bcc .DrawBall
-    ldx #0                  ; draw nothing
-    ldy #0
+    ldx #BALL_SIZE          ; 2, load ball width in X
+    ldy #%00000010          ; 2, load ball graphics enable value in Y
+    sec                     ; 2, set carry flag before subtract
+    sbc BallY               ; 3, subtract ball y-position from current scanline count
+    cmp #BALL_HEIGHT        ; 2, is ball found in scanline?
+    bcc .DrawBall           ; 2
+    ldx #0                  ; 2, draw nothing
+    ldy #0                  ; 2
 .DrawBall:
-    txa                     ; transfer ball width to A
-    sta CTRLPF
-    tya                     ; transfer graphics enable value to A
-    sta ENABL               ; enable ball graphic
+    txa                     ; 2, transfer ball width to A
+    sta CTRLPF              ; 3
+    tya                     ; 2, transfer graphics enable value to A
+    sta ENABL               ; 3, enable ball graphic
 
-    sta WSYNC               ; draw scanline (2 of 2)
+    sta WSYNC               ; 3, draw scanline (2 of 2)
 
-    dec ScanlineCount       ; decrement visible scanline count
-    lda ScanlineCount       ; load updated scanline count
-    bne VisibleScanlines    ; branch if all scanlines have been drawn
+    dec ScanlineCount       ; 5, decrement visible scanline count
+    lda ScanlineCount       ; 3, load updated scanline count
+    bne VisibleScanlines    ; 2, branch if all scanlines have been drawn
 
+    ;inc BallX
 ;===========================================================================
 ; Output overscan
 ;===========================================================================
-    lda #2
-    sta VBLANK
+    lda #2                  ; 2, enable VBLANK
+    sta VBLANK              ; 3
 
-    ldx #29
+    ; consider using timer: https://8bitworkshop.com/v3.6.0/?file=examples%2Fcollisions.a&platform=vcs
+    ; to ensure we spend only 29 scanlines worth of work in here
+    ; at the end of it all, we call again WSYNC and HMOVE to apply horizontal motion updates
+
+    ldx #29                 ; 2
 OutputOverscan:
-    sta WSYNC
-    dex
-    bne OutputOverscan
+    sta WSYNC               ; 3
+    dex                     ; 2
+    bne OutputOverscan      ; 2
 
 ;===========================================================================
-; Handle player input for next frame
+; Handle player input for next frame (88)
 ;===========================================================================
-    lda #%00010000          ; handle P0 input
-    ldx Player0Y            ; load P0 y-position
-    jsr HandlePlayerInput
-    stx Player0Y            ; update P0 y-position
+HandlePlayerInputs:
+    lda #%00010000          ; 2, handle P0 input
+    ldx Player0Y            ; 3, load P0 y-position
+    jsr HandlePlayerInput   ; 36
+    stx Player0Y            ; 3, update P0 y-position
 
-    lda #%00000001          ; handle P1 input
-    ldx Player1Y            ; load P1 y-position
-    jsr HandlePlayerInput
-    stx Player1Y            ; update P1 y-position
+    lda #%00000001          ; 2, handle P1 input
+    ldx Player1Y            ; 3, load P1 y-position
+    jsr HandlePlayerInput   ; 36
+    stx Player1Y            ; 3, update P1 y-position
+
+;===========================================================================
+; Update x offsets for motion objects
+;
+;===========================================================================
+    sta WSYNC               ; 3, clear horiz. motion registers
+    sta HMCLR               ; 3
+
+    lda BallX               ; 3, handle ball x-position
+    ldx #4                  ; 2
+    jsr HandleObjXPosition  ; 39
+
+    sta WSYNC               ; 3, sync scanline before setting horizontal registers
+    sta HMOVE               ; 3, apply *all* horizontal motion registers (HM__)
 
 ;===========================================================================
 ; Draw next frame
@@ -242,64 +259,68 @@ OutputOverscan:
 ; Subroutines
 ;===========================================================================
 ;-----------------------------------------------------------------------
-; HandlePlayerDraw
+; HandlePlayerDraw (28)
 ; A is current scanline count
 ; X is player to draw (0 = player-0, 1 = player-1)
 ; Y is player sprite value (0 if not drawn)
 ;-----------------------------------------------------------------------
 HandlePlayerDraw subroutine
-    ldy #PLAYER_SPRITE      ; load player sprite in Y
-    sec                     ; set carry for subtract
-    sbc Player0Y,x          ; subtract the player-y from A
-    cmp #PLAYER_HEIGHT      ; is sprite found in scanline?
-    bcc .DrawPlayer
-    ldy #0                  ; reset value in Y (don't draw player)
+    ldy #PLAYER_SPRITE      ; 2, load player sprite in Y
+    sec                     ; 2, set carry for subtract
+    sbc Player0Y,x          ; 4, subtract the player-y from A
+    cmp #PLAYER_HEIGHT      ; 2, is sprite found in scanline?
+    bcc .DrawPlayer         ; 2
+    ldy #0                  ; 2, reset value in Y (don't draw player)
 .DrawPlayer:
-    clc                     ; clear carry flag
-    tya                     ; transfer sprite value in Y to A
-    sta GRP0,x              ; store player-0 bitmap
+    clc                     ; 2, clear carry flag
+    tya                     ; 2, transfer sprite value in Y to A
+    sta GRP0,x              ; 4, store player-0 bitmap
     rts                     ; 6
 
 ;-----------------------------------------------------------------------
-; HandlePlayerInput
+; HandlePlayerInput (30)
 ; A is the bitmask which is AND-ed to detect input change
 ; X is P0 or P1 y-position
 ;-----------------------------------------------------------------------
 HandlePlayerInput subroutine
-    bit SWCHA
-    bne .HandleDownInput
-    cpx #80                 ; is y-position at top of screen?
-    beq .HandleDownInput
-    inx                     ; increment y-position in X
+    bit SWCHA               ; 3
+    bne .HandleDownInput    ; 2
+    cpx #80                 ; 2, is y-position at top of screen?
+    beq .HandleDownInput    ; 2
+    inx                     ; 2, increment y-position in X
 .HandleDownInput:
-    asl                     ; bit-shift left to test the down input
-    bit SWCHA
-    bne .HandleNoInput
-    cpx #4                  ; is y-position at bottom of screen?
-    beq .HandleNoInput
-    dex                     ; decrement y-position in X
+    asl                     ; 2, bit-shift left to test the down input
+    bit SWCHA               ; 3
+    bne .HandleNoInput      ; 2
+    cpx #4                  ; 2, is y-position at bottom of screen?
+    beq .HandleNoInput      ; 2
+    dex                     ; 2, decrement y-position in X
 .HandleNoInput:
-    rts
+    rts                     ; 6
 
 ;-----------------------------------------------------------------------
-; Handle motion object x-position with fine offset
+; Handle motion object x-position with fine offset (33)
 ; A is desired x-position in pixels
 ; X is type of object (0 = P0, 1 = P1, 2 = M0, 3 = M3, 4 = Ball)
 ;-----------------------------------------------------------------------
 HandleObjXPosition subroutine
-    sta WSYNC               ; we want to do this work during the h-blank period
-    sec                     ; ensure carry flag is set for subtraction
+    sta WSYNC               ; 3, we want to do this work during the h-blank period
+    sec                     ; 2, ensure carry flag is set for subtraction
 .DivideBy15Clocks:
-    sbc #15                 ; subtract 15 TIA clocks (5 CPU cycles) from A
-    bcs .DivideBy15Clocks   ; loop until negative
-    eor #7                  ; adjust remainder between -8 and +7 using XOR
-    asl                     ; bit-shift left 4 times, as HM__ uses left-most nibble
-    asl
-    asl
-    asl
-    sta HMP0,x              ; set fine x-position for object x
-    sta RESP0,x             ; set coarse x-position for object x
-    rts
+    sbc #15                 ; 2, subtract 15 TIA clocks (5 CPU cycles) from A
+    bcs .DivideBy15Clocks   ; 2, loop until negative
+    eor #7                  ; 2, adjust remainder between -8 and +7 using XOR
+    asl                     ; 2 bit-shift left 4 times, as HM__ uses left-most nibble
+    asl                     ; 2
+    asl                     ; 2
+    asl                     ; 2
+    sta RESP0,x             ; 4, set coarse x-position for object x
+    sta HMP0,x              ; 4, set fine x-position for object x
+    ; IDEA: -- do an additional: (?)
+    ; sta WSYNC
+    ; sta HMOVE
+    ; sta HMCLR
+    rts                     ; 6
 
 ;===========================================================================
 ; Data
