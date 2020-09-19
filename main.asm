@@ -42,10 +42,15 @@
 ; 4. -- move ball
 ; DONE - horizontal, vertical
 ; DONE - velocity
-; 5. -- handle ball collisions with top, bottom, left, right
+; 5. -- handle ball collisions with screen top, bottom
 ; DONE - top
 ; DONE - bottom
 ; 6. -- handle collisions between p0,p1 and ball
+; DONE - p0
+; DONE - p1
+; 7. -- handle collision with screen left, right
+; 8. -- update p0,p1 scores on collision
+; 9. -- implement scoreboard
 ;===========================================================================
 
 ;===========================================================================
@@ -76,8 +81,8 @@ BallXFrac .byte             ; ball x fractional value
 ; Constants
 ;-----------------------------------------------------------------------
 SCANLINE_COUNT = 96         ; 2-line kernel; 192 / 2 = 96
-SCREEN_Y_MAX = 94           ; top of the screen
-SCREEN_Y_MIN = 4            ; bottom of the screen
+SCREEN_Y_MAX = 94           ; optical top of the screen
+SCREEN_Y_MIN = 4            ; optical bottom of the screen
 
 PLAYER_HEIGHT = 16
 PLAYER_0_X_INIT = 0         ; initial P0 x-position (in pixels)
@@ -117,7 +122,8 @@ Start:
 
     lda #1                  ; 2, set default ball velocity
     sta BallYVel            ; 3
-    lda #48                 ; 2
+    lda #$30                ; 2, set ball x-velocity to 48
+    ;lda #$d0                ; 2, test negative x-velocity
     sta BallXVel
 
     lda #PLAYER_0_X_INIT    ; 2, set player default x-position
@@ -243,26 +249,16 @@ OutputOverscan:
     TIMER_SETUP 29           ; use timer instead of iterating over each scanline
 
 ;===========================================================================
-; Update x offsets for motion objects
+; Handle Ball collisions with screen (update ball y-velocity)
+; X - ball y-position
+; A - ball y-velocity (+1 or -1)
 ;===========================================================================
-    ; sta WSYNC               ; 3, clear horiz. motion registers
-    ; sta HMCLR               ; 3
-
-    ; lda BallX               ; 3, handle ball x-position
-    ; ldx #4                  ; 2
-    ; jsr HandleObjXPosition  ; 39
-
-    ; sta WSYNC               ; 3, sync scanline before setting horizontal registers
-    ; sta HMOVE               ; 3, apply *all* horizontal motion registers (HM__)
-
-;===========================================================================
-; Handle Ball collisions
-;===========================================================================
+HandleScreenCollision:
     ldx BallY               ; load ball y-position in X
-    lda #$ff                ; 2, load -1 in A
+    lda #$ff                ; 2, load negative y-velocity (-1) in A
     cpx #SCREEN_Y_MAX       ; is ball at top of screen?
     bcs .UpdateBallYVel
-    lda #1                  ; 2, load +1 in A
+    lda #1                  ; 2, load positive y-velocity (1) in A
     cpx #SCREEN_Y_MIN       ; is ball at bottom of screen?
     bcc .UpdateBallYVel
     lda BallYVel            ; load current y-velocity value
@@ -270,7 +266,33 @@ OutputOverscan:
     sta BallYVel            ; set ball y-velocity to either -1, 1 or its current value
 
 ;===========================================================================
-; Update Ball position via velocity
+; Handle Ball collisions with players (update ball x-velocity)
+; - if collides with P1, set x-velocity to negative
+; - if collides with P0, set x-velocity to positive
+; - if collision, reset x-velocity fractional value (??)
+;===========================================================================
+HandlePlayerCollision:
+    lda BallXVel            ; load current x-velocity in A
+    bmi .HandleBallMoveLeft ; is ball moving left?
+
+    ldx #$d0                ; load negative x-velocity in X
+    lda #%01000000          ; has ball collided with P1?
+    bit CXP1FB              ; AND value in register with A
+    bne .UpdateBallXVel     ; if collision, update x-velocity
+
+.HandleBallMoveLeft:
+    ldx #$30                ; load positive x-velocity in X
+    lda #%01000000          ; has ball collided with P0?
+    bit CXP0FB
+    bne .UpdateBallXVel
+
+    ldx BallXVel
+.UpdateBallXVel:
+    stx BallXVel            ; update ball x-velocity to positive or negative
+    sta CXCLR               ; clear collision registers
+
+;===========================================================================
+; Update Ball x,y position via velocity
 ;===========================================================================
 UpdateBallPosition:
     sta WSYNC               ; 3, necessary?
@@ -278,39 +300,26 @@ UpdateBallPosition:
 
     lda BallY               ; 3, update y-position
     clc                     ; 2, clear carry
-
-; TODO - handle y-position update
-;     lda BallYVel
-;     bmi .DecrementBallYVel
-;     lda BallY
-;     adc BallYVel
-;     adc BallYVel
-; .DecrementBallYVel:
-;     lda BallY
-;     sec
-;     sbc BallYVel
-
     adc BallYVel            ; 3, increment y-position by y-velocity
     sta BallY               ; 3
-
     lda BallXVel            ; 3, update x-position
     bmi .MoveBallLeft       ; 2, if x-velocity < 0, move Ball left
+
     clc                     ; 2, clear carry
     adc BallXFrac           ; 3, increment x-position by x-velocity
     sta BallXFrac           ; 3, BallXFrac += BallXVel
-    lda #$f0                ; 2
-    sta HMBL                ; 3, set ball motion register
-    bne .Foo                ; 2
+    lda #$f0                ; 2, set ball motion register to move right 1 clock
+    sta HMBL                ; 3
+    bne .CommitBallUpdate   ; 2
 .MoveBallLeft:
-    sec                     ; 2, set carry flag
-    sbc BallXFrac           ; 3?, subtract x-velocity in A from BallXFrac
+    clc                     ; 2, set carry flag
+    adc BallXFrac           ; seems to work...? looks strange, however
     sta BallXFrac           ; 3, update x-velocity value
-    bcs .Foo                ; 2, branch if carry flag was set
-    lda #$10                ; 2
-    sta HMBL                ; 3, set ball motion register
-.Foo:
+    lda #$10                ; 2, set ball motion register to move left by 1 clock
+    sta HMBL                ; 3
+.CommitBallUpdate:
     sta WSYNC               ; 3
-    sta HMOVE               ; 3
+    sta HMOVE               ; 3, commit all horizontal motion updates
 
 ;===========================================================================
 ; Handle player input for next frame (88)
