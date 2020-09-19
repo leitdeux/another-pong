@@ -216,6 +216,7 @@ HandleBallDraw:
     sbc BallY               ; 3, subtract ball y-position from current scanline count
     cmp #BALL_HEIGHT        ; 2, is ball found in scanline?
     bcc .DrawBall           ; 2
+
     ldx #0                  ; 2, draw nothing
     ldy #0                  ; 2
 .DrawBall:
@@ -232,20 +233,13 @@ HandleBallDraw:
 
 ;===========================================================================
 ; Output overscan
+; - ensure we spend only 29 scanlines worth of work in here
+; - at the end of it all, we call again WSYNC and HMOVE to apply motion updates
 ;===========================================================================
     lda #2                  ; 2, enable VBLANK
     sta VBLANK              ; 3
 
-    ; consider using timer: https://8bitworkshop.com/v3.6.0/?file=examples%2Fcollisions.a&platform=vcs
-    ; to ensure we spend only 29 scanlines worth of work in here
-    ; at the end of it all, we call again WSYNC and HMOVE to apply horizontal motion updates
-
-    ;ldx #29                 ; 2
 OutputOverscan:
-    ;sta WSYNC               ; 3
-    ;dex                     ; 2
-    ;bne OutputOverscan      ; 2
-
     TIMER_SETUP 29           ; use timer instead of iterating over each scanline
 
 ;===========================================================================
@@ -269,7 +263,6 @@ HandleScreenCollision:
 ; Handle Ball collisions with players (update ball x-velocity)
 ; - if collides with P1, set x-velocity to negative
 ; - if collides with P0, set x-velocity to positive
-; - if collision, reset x-velocity fractional value (??)
 ;===========================================================================
 HandlePlayerCollision:
     lda BallXVel            ; load current x-velocity in A
@@ -311,6 +304,7 @@ UpdateBallPosition:
     lda #$f0                ; 2, set ball motion register to move right 1 clock
     sta HMBL                ; 3
     bne .CommitBallUpdate   ; 2
+
 .MoveBallLeft:
     clc                     ; 2, set carry flag
     adc BallXFrac           ; seems to work...? looks strange, however
@@ -361,6 +355,7 @@ HandlePlayerDraw subroutine
     sbc Player0Y,x          ; 4, subtract the player-y from A
     cmp #PLAYER_HEIGHT      ; 2, is sprite found in scanline?
     bcc .DrawPlayer         ; 2
+
     ldy #0                  ; 2, reset value in Y (don't draw player)
 .DrawPlayer:
     clc                     ; 2, clear carry flag
@@ -376,15 +371,19 @@ HandlePlayerDraw subroutine
 HandlePlayerInput subroutine
     bit SWCHA               ; 3
     bne .HandleDownInput    ; 2
+
     cpx #PLAYER_Y_MAX       ; 2, is player y-position at top of screen?
     beq .HandleDownInput    ; 2
+
     inx                     ; 2, increment y-position in X
 .HandleDownInput:
     asl                     ; 2, bit-shift left to test the down input
     bit SWCHA               ; 3
     bne .HandleNoInput      ; 2
+
     cpx #SCREEN_Y_MIN       ; 2, is y-position at bottom of screen?
     beq .HandleNoInput      ; 2
+
     dex                     ; 2, decrement y-position in X
 .HandleNoInput:
     rts                     ; 6
