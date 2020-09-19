@@ -22,9 +22,9 @@
       "problemMatcher": []
     },
     {
-      "label": "run stella debugger",
+      "label": "build and run stella debugger",
       "type": "shell",
-      "command": "make debug",
+      "command": "make all && make debug",
       "problemMatcher": []
     }
   ]
