@@ -50,11 +50,22 @@
 ; DONE - p1
 ; 7. -- handle collision with screen left, right
 ; DONE - reset ball position
-; - reset ball velocity
-; - update p0,p1 scores on collision
+; DONE - reset ball velocity
+; DONE - update p0,p1 scores on collision
+; 8. -- draw tennis net in center of screen
+; DONE - enable M0
+; DONE - draw with vertical gaps in between
 ; 9. -- implement scoreboard
-; 10. -- implement rng
+; - implement with playfield?
+; - implement using sprites?
+; 10. -- sound effects
+; - first/next ball
+; - player collision
+; - screen collision
+; - goal collision
+; 11. -- implement rng
 ; - set, reset ball velocity with random value
+; 12. -- delay next ball for a few frames after goal
 ;===========================================================================
 
 ;===========================================================================
@@ -84,6 +95,9 @@ BallXFrac .byte             ; ball x fractional value
 GoalFrameCount .byte        ; the current number of frames elapsed since a goal was made
 GoalFrameTarget .byte       ; max # of frames until reaching a goal
 
+Player0Score .byte          ; score of P0
+Player1Score .byte          ; score of P1
+
 ;-----------------------------------------------------------------------
 ; Constants
 ;-----------------------------------------------------------------------
@@ -102,7 +116,7 @@ PLAYER_SPRITE = %00000111
 
 BALL_HEIGHT = 4
 BALL_X_INIT = 88            ; initial Ball x-position (offset)
-BALL_Y_INIT = 50            ; initial Ball y-position
+BALL_Y_INIT = 100           ; initial Ball y-position
 BALL_SIZE = %00101000       ; 3 pixels
 
 CENTER_TO_GOAL_FRAMES = 76  ; # of frames from screen center to a goal
@@ -174,6 +188,10 @@ Start:
     ldx #4                  ; 2
     jsr HandleObjXPosition  ; 39
 
+    lda #BALL_X_INIT        ; 2, handle M0 x-position
+    ldx #2                  ; 2
+    jsr HandleObjXPosition  ; 39
+
     sta WSYNC               ; 3, sync scanline before setting horizontal registers
     sta HMOVE               ; 3, apply *all* horizontal motion registers (HM__)
 
@@ -184,8 +202,8 @@ NextFrame:
     lda #SCANLINE_COUNT     ; 2, reset visible scanline count
     sta ScanlineCount       ; 3
 
-    ;lda #COLOR_BLUE         ; 2, set background color
-    ;sta COLUBK              ; 3
+    lda #COLOR_BLUE         ; 2, set background color
+    sta COLUBK              ; 3
 
 ;===========================================================================
 ; Output VSync, VBlank
@@ -213,18 +231,25 @@ OutputVBlank:
 ; Visible scanlines
 ;===========================================================================
 DrawGame:
-    ; IDEA -- improve drawing routines so that setup consistently occurs during h-blank period
-    ;sta WSYNC
+    ; FIXME -- improve drawing routines so that setup consistently occurs during h-blank period
     lda ScanlineCount       ; 3, load visible scanline count
 VisibleScanlines:           ; 78
     ldx #0                  ; 2, draw P0
     jsr HandlePlayerDraw    ; 34
-    ; unnecessary?
     ;sta WSYNC               ; 3, scanline (1 of 2) we sync after because we want
                             ; P0 and P1 to be drawn on the same line
     lda ScanlineCount       ; 3, restore scanline value for next player draw
     ldx #1                  ; 2, draw P1
     jsr HandlePlayerDraw    ; 34
+
+HandleMissileDraw:
+    ldx #0                  ; 2, value for disabling M0 graphics
+    lda #4                  ; 2, the vertical width of M0 when AND-ed with ScanlineCount
+    bit ScanlineCount
+    beq .NoMissileDraw      ; 2, if the result of AND is not 0, do not draw M0
+    ldx #2                  ; 2, enable M0 graphics
+.NoMissileDraw:
+    stx ENAM0               ; 3, enable or disable M0 graphics
 
     lda ScanlineCount       ; 3, load current scanline
 HandleBallDraw:
@@ -278,24 +303,20 @@ HandleScreenCollision:
 
 ;===========================================================================
 ; Handle Ball collision with "goal" (screen left, right)
+; - compare the current frame count with the target frame count
+; - if GoalFrameCount >= GoalFrameTarget, then consider the ball has reached
+; the "goal" point; i.e. a player has scored a point
+; - reset the fine x-position of the ball
+; - reset the frame count and frame target
+; - reverse the direction of the ball (x-velocity)
+; - update the score of the player that earned a point
 ;===========================================================================
-; TODO
-
-; Q. How to detect collision with screen's L/R edge?
-; IDEA 1 - use playfield; hardware collision detection (most accurate)
-; IDEA 2 - pre-calculate the time it would take for the ball to reach a goal
-;   1 - from the start (i.e. from the center of screen to one side)
-;   2 - after a player collision (from left or right side to the other)
-;   3 - init variable, update on collision, reset on goal
-;   compare this variable to another value (frames counter?)
-; Q. How to reset the ball's x,y position and velocity?
-; - zero-out horiz. motion register (refer to init code)
-
 HandleGoalCollision:
     lda GoalFrameCount      ; 3, load current frame count in A
-    cmp GoalFrameTarget        ; 3,
+    cmp GoalFrameTarget     ; 3
     bcc .NoGoal             ; 2, is frame count < max frames?
-
+    lda #BALL_Y_INIT        ; 2, reset ball y-position
+    sta BallY
     lda BallX               ; 3, reset ball x-position
     ldx #4                  ; 2
     jsr HandleObjXPosition  ; 39
@@ -303,12 +324,18 @@ HandleGoalCollision:
     sta GoalFrameCount
     lda #CENTER_TO_GOAL_FRAMES ; reset target # of frames until goal should be checked
     sta GoalFrameTarget
-    ; TODO -- increment score depending on ball direction? (L = P1, R = P0)
+    ldy #$30                ; if x-velocity is negative, set positive and update P1 score
+    ldx #1
+    lda BallXVel
+    bmi .ReverseXVelocity
+    ldy #$d0                ; if x-velocity is positive, set negative and update P0 score
+    ldx #0
+.ReverseXVelocity:
+    sty BallXVel
+    inc Player0Score,x      ; 6, increment p0 or p1 score
     jmp .CommitBallUpdate
 .NoGoal:
-    ldx GoalFrameCount      ; 2, increment frame count
-    inx                     ; 2
-    stx GoalFrameCount      ; 3
+    inc GoalFrameCount      ; 5, increment frame count
 
 ;===========================================================================
 ; Handle Ball collisions with players (update ball x-velocity)
@@ -316,36 +343,13 @@ HandleGoalCollision:
 ; - if collides with P0, set x-velocity to positive
 ;===========================================================================
 HandlePlayerCollision:
-;     lda BallXVel            ; load current x-velocity in A
-;     ;ldy #0                  ; load frame count value in Y
-;     bmi .HandleBallMoveLeft ; is ball moving left?
-
-;     ldx #$d0                ; load negative x-velocity in X
-;     lda #%01000000          ; has ball collided with P1?
-;     bit CXP1FB              ; AND value in register with A
-;     bne .UpdateBallXVel     ; if collision, update x-velocity
-
-;     ;ldy GoalFrameCount      ; load current frame count in Y
-; .HandleBallMoveLeft:
-;     ldx #$30                ; load positive x-velocity in X
-;     lda #%01000000          ; has ball collided with P0?
-;     bit CXP0FB
-;     bne .UpdateBallXVel
-
-;     ldx BallXVel
-; .UpdateBallXVel:
-;     stx BallXVel            ; update ball x-velocity to positive or negative
-;     ;sty GoalFrameCount      ; reset or maintain current frame count value
-;     sta CXCLR               ; clear collision registers
-
-    ; refactored version
     lda BallXVel            ; 3, load current x-velocity in A
     bmi .HandleBallMoveLeft ; 2, is ball moving left?
 
-    ; could refactor this to a subroutine
     lda #%01000000          ; 2, has ball collided with P1?
     bit CXP1FB              ; 3
     bvc .NoPlayerCollision  ; 2
+
     lda #$d0                ; 2, update x-velocity to negative value
     sta BallXVel            ; 3
     lda #0                  ; 2, reset goal frame counter and update target frames
@@ -356,6 +360,7 @@ HandlePlayerCollision:
     lda #%01000000          ; 2, has ball collided with P0?
     bit CXP0FB              ; 3
     bvc .NoPlayerCollision  ; 2
+
     lda #$30                ; 2, update x-velocity to positive value
     sta BallXVel            ; 3
     lda #0                  ; 2, reset goal frame counter
@@ -472,7 +477,7 @@ HandlePlayerInput subroutine
 ;-----------------------------------------------------------------------
 ; Handle motion object x-position with fine offset (33)
 ; A is desired x-position in pixels
-; X is type of object (0 = P0, 1 = P1, 2 = M0, 3 = M3, 4 = Ball)
+; X is type of object (0 = P0, 1 = P1, 2 = M0, 3 = M1, 4 = Ball)
 ;-----------------------------------------------------------------------
 HandleObjXPosition subroutine
     sta WSYNC               ; 3, we want to do this work during the h-blank period
@@ -487,16 +492,21 @@ HandleObjXPosition subroutine
     asl                     ; 2
     sta RESP0,x             ; 4, set coarse x-position for object x
     sta HMP0,x              ; 4, set fine x-position for object x
-    ; IDEA: -- do an additional: (so each object uses 2 scanlines instead of just one, might be useful)
-    ; sta WSYNC
-    ; sta HMOVE
-    ; sta HMCLR
     rts                     ; 6
 
 ;===========================================================================
 ; Data
 ;===========================================================================
-; TODO -- scoreboard digits
+    align $100              ; ensure data doesn't cross page boundary
+
+; Scoreboard digits (0-9, 8x8 pixels)
+DigitFontTable:
+	.hex 003c6666766e663c007e181818381818
+    .hex 007e60300c06663c003c66061c06663c
+    .hex 0006067f661e0e06003c6606067c607e
+    .hex 003c66667c60663c00181818180c667e
+    .hex 003c66663c66663c003c66063e66663c
+
 ;===========================================================================
 ; Complete ROM
 ;===========================================================================
