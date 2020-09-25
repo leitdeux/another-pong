@@ -56,13 +56,17 @@
 ; DONE - enable M0
 ; DONE - draw with vertical gaps in between
 ; 9. -- implement scoreboard
-; - implement with playfield?
-; - implement using sprites?
+; DONE - use PF
+; DONE - improve horizontal positioning of scoreboard
+; DONE - try with sprites?
+; DONE - increment scores
+; 9. -- improve draw timing, movement updates (prevent inconsistent draw updates during h&v movement)
 ; 10. -- sound effects
 ; - first/next ball
 ; - player collision
 ; - screen collision
 ; - goal collision
+; - fix draw priority of missile vs ball so ball appears in front of missile
 ; 11. -- implement rng
 ; - set, reset ball velocity with random value
 ; 12. -- delay next ball for a few frames after goal
@@ -95,37 +99,47 @@ BallXFrac .byte             ; ball x fractional value
 GoalFrameCount .byte        ; the current number of frames elapsed since a goal was made
 GoalFrameTarget .byte       ; max # of frames until reaching a goal
 
-Player0Score .byte          ; score of P0
-Player1Score .byte          ; score of P1
+Player0Score .byte          ; score of P0, 2 digits stored as binary-coded decimal (BCD)
+Player1Score .byte          ; score of P1, 2 digits (BCD)
+ScoreTemp .byte             ; temporary value used in score parsing
+
+Player0ScoreSprite .byte    ; score sprite of P0
+Player1ScoreSprite .byte    ; score sprite of P1
+
+OnesDigitOffset .word       ; score digit pointers
+TensDigitOffset .word
 
 ;-----------------------------------------------------------------------
 ; Constants
 ;-----------------------------------------------------------------------
-SCANLINE_COUNT = 96         ; 2-line kernel; 192 / 2 = 96
+SCANLINE_COUNT = 96 - 14         ; 2-line kernel; 192 / 2 = 96
 SCREEN_X_MIN = 0            ; optical left edge of screen
 SCREEN_X_MAX = 160          ; optical right edge of screen
-SCREEN_Y_MAX = 94           ; optical top of the screen
+SCREEN_Y_MAX = 81           ; optical top of the screen
 SCREEN_Y_MIN = 4            ; optical bottom of the screen
 
 PLAYER_HEIGHT = 16
 PLAYER_0_X_INIT = 8         ; initial P0 x-position (in pixels)
 PLAYER_1_X_INIT = 152       ; initial P1 x-position
-PLAYER_Y_INIT = 45          ; initial Player y-position
-PLAYER_Y_MAX = 80           ; max player y-position
+PLAYER_Y_INIT = 35          ; initial Player y-position
+PLAYER_Y_MAX = 65           ; max player y-position
 PLAYER_SPRITE = %00000111
 
 BALL_HEIGHT = 4
 BALL_X_INIT = 88            ; initial Ball x-position (offset)
-BALL_Y_INIT = 100           ; initial Ball y-position
-BALL_SIZE = %00101000       ; 3 pixels
+BALL_Y_INIT = 110           ; initial Ball y-position
+BALL_SIZE = %00101100       ; set 3-pixel width and highest draw priority
 
-CENTER_TO_GOAL_FRAMES = 76  ; # of frames from screen center to a goal
-PLAYER_TO_GOAL_FRAMES = 142 ; # of frames from one player to a goal
+CENTER_TO_GOAL_FRAMES = 77  ; # of frames from screen center to a goal
+PLAYER_TO_GOAL_FRAMES = 143 ; # of frames from one player to a goal
+
+SCORE_DIGITS_HEIGHT = 5     ; the height of player score digits
 
 COLOR_WHITE = $0e
 COLOR_BLUE = $a0
 COLOR_PURPLE = $8e
 COLOR_YELLOW = $1a
+COLOR_GREEN = $c0
 
 ;===========================================================================
 ; Init code segment
@@ -164,25 +178,20 @@ Start:
     lda #CENTER_TO_GOAL_FRAMES ; 2, set current target frame count until goal
     sta GoalFrameTarget
 
-    lda #COLOR_WHITE        ; 2, set player colors
-    sta COLUP0              ; 3
-    sta COLUP1              ; 3
-    lda #COLOR_YELLOW       ; 2, set ball color
-    sta COLUPF              ; 3
-
 ;-----------------------------------------------------------------------
 ; Initialize fine x-position offsets for all motion objects (144)
 ;-----------------------------------------------------------------------
     sta WSYNC               ; 3, clear horiz. motion registers
     sta HMCLR               ; 3
 
-    lda Player0X            ; 3, handle P0 x-position
-    ldx #0                  ; 2
-    jsr HandleObjXPosition  ; 39
+    ; ; set initial player positions after scoreboard draw
+    ; lda Player0X            ; 3, handle P0 x-position
+    ; ldx #0                  ; 2
+    ; jsr HandleObjXPosition  ; 39
 
-    lda Player1X            ; 3, handle P1 x-position
-    ldx #1                  ; 2
-    jsr HandleObjXPosition  ; 39
+    ; lda Player1X            ; 3, handle P1 x-position
+    ; ldx #1                  ; 2
+    ; jsr HandleObjXPosition  ; 39
 
     lda BallX               ; 3, handle Ball x-position
     ldx #4                  ; 2
@@ -191,6 +200,8 @@ Start:
     lda #BALL_X_INIT        ; 2, handle M0 x-position
     ldx #2                  ; 2
     jsr HandleObjXPosition  ; 39
+
+    jsr ParseScoreDigits    ; setup score digits
 
     sta WSYNC               ; 3, sync scanline before setting horizontal registers
     sta HMOVE               ; 3, apply *all* horizontal motion registers (HM__)
@@ -201,9 +212,6 @@ NextFrame:
 
     lda #SCANLINE_COUNT     ; 2, reset visible scanline count
     sta ScanlineCount       ; 3
-
-    lda #COLOR_BLUE         ; 2, set background color
-    sta COLUBK              ; 3
 
 ;===========================================================================
 ; Output VSync, VBlank
@@ -224,9 +232,27 @@ OutputVBlank:
     sta WSYNC               ; 3
     dex                     ; 2
     bne OutputVBlank        ; 2
+    stx VBLANK              ; 3, disable VBLANK
 
-    lda #0                  ; 2, disable VBLANK
-    sta VBLANK              ; 3
+    jsr HandleScoreDraw     ; draw scoreboard
+
+    ; set initial player positions after scoreboard draw
+    lda Player0X            ; 3, handle P0 x-position
+    ldx #0                  ; 2
+    jsr HandleObjXPosition  ; 39
+
+    lda Player1X            ; 3, handle P1 x-position
+    ldx #1                  ; 2
+    jsr HandleObjXPosition  ; 39
+
+    lda #COLOR_GREEN        ; 2, set background color
+    sta COLUBK              ; 3
+    lda #COLOR_YELLOW       ; 2, set ball color
+    sta COLUPF              ; 3
+    lda #COLOR_WHITE        ; 2, set player colors
+    sta COLUP0              ; 3
+    sta COLUP1              ; 3
+
 ;===========================================================================
 ; Visible scanlines
 ;===========================================================================
@@ -241,8 +267,7 @@ VisibleScanlines:           ; 78
     lda ScanlineCount       ; 3, restore scanline value for next player draw
     ldx #1                  ; 2, draw P1
     jsr HandlePlayerDraw    ; 34
-
-HandleMissileDraw:
+.HandleMissileDraw:
     ldx #0                  ; 2, value for disabling M0 graphics
     lda #4                  ; 2, the vertical width of M0 when AND-ed with ScanlineCount
     bit ScanlineCount
@@ -250,9 +275,8 @@ HandleMissileDraw:
     ldx #2                  ; 2, enable M0 graphics
 .NoMissileDraw:
     stx ENAM0               ; 3, enable or disable M0 graphics
-
     lda ScanlineCount       ; 3, load current scanline
-HandleBallDraw:
+.HandleBallDraw:
     ldx #BALL_SIZE          ; 2, load ball width in X
     ldy #%00000010          ; 2, load ball graphics enable value in Y
     sec                     ; 2, set carry flag before subtract
@@ -276,10 +300,12 @@ HandleBallDraw:
 ; - ensure we spend only 29 scanlines worth of work in here
 ; - at the end of it all, we call again WSYNC and HMOVE to apply motion updates
 ;===========================================================================
-    lda #2                  ; 2, enable VBLANK
-    sta VBLANK              ; 3
-
+    ;lda #2                  ; 2, enable VBLANK
+    ;sta VBLANK              ; 3
+    lda #COLOR_BLUE
+    sta COLUBK
 OutputOverscan:
+    ; TIMER_SETUP 29
     TIMER_SETUP 29           ; use timer instead of iterating over each scanline
 
 ;===========================================================================
@@ -332,7 +358,12 @@ HandleGoalCollision:
     ldx #0
 .ReverseXVelocity:
     sty BallXVel
-    inc Player0Score,x      ; 6, increment p0 or p1 score
+    sed                     ; 2, enable BCD
+    lda Player0Score,x      ; 4
+    clc
+    adc #1                  ; 2, increment score
+    sta Player0Score,x      ; 4
+    cld                     ; 2, disable BCD
     jmp .CommitBallUpdate
 .NoGoal:
     inc GoalFrameCount      ; 5, increment frame count
@@ -415,6 +446,8 @@ HandlePlayerInputs:
     jsr HandlePlayerInput   ; 36
     stx Player1Y            ; 3, update P1 y-position
 
+    jsr ParseScoreDigits    ; update score digits
+
 ;-----------------------------------------------------------------------
 ; Overscan timer expires
 ;-----------------------------------------------------------------------
@@ -429,6 +462,7 @@ HandlePlayerInputs:
 ;===========================================================================
 ; Subroutines
 ;===========================================================================
+
 ;-----------------------------------------------------------------------
 ; HandlePlayerDraw (28)
 ; A is current scanline count
@@ -494,18 +528,187 @@ HandleObjXPosition subroutine
     sta HMP0,x              ; 4, set fine x-position for object x
     rts                     ; 6
 
+;-----------------------------------------------------------------------
+; Handle player scoreboard draw
+;
+;-----------------------------------------------------------------------
+HandleScoreDraw subroutine
+    lda #COLOR_BLUE
+    sta COLUBK
+    lda #0                  ; clear all TIA registers
+    sta GRP0
+    sta GRP1
+    sta HMCLR
+    nop
+    nop
+    nop
+    sta RESP0
+    sta HMP0
+    nop
+    nop
+    nop
+    sta RESP1
+    sta HMP1
+
+    lda #%00000101
+    sta NUSIZ0
+    sta NUSIZ1
+
+    lda #COLOR_PURPLE       ; set color of PF
+    sta COLUP0
+    sta COLUP1
+
+    ldx #SCORE_DIGITS_HEIGHT
+DrawScoreboard:
+.DrawPlayer0Score:
+    ldy TensDigitOffset     ; load ten's digit offset for score
+    lda Digits,y            ; load value in Digits table
+    and #$f0                ; isolate hi-nibble and store in P0 score
+    sta Player0ScoreSprite
+    ldy OnesDigitOffset     ; load one's digit
+    lda Digits,y
+    and #$0f                ; isolate lo-nibble and merge
+    ora Player0ScoreSprite  ; merge one's and ten's digit values
+    sta Player0ScoreSprite  ; store result in P0 score sprite
+    sta WSYNC
+    sta GRP0                 ; display sprite middle PF register
+.DrawPlayer1Score:
+    ldy TensDigitOffset+1   ; load ten's digit
+    lda Digits,y
+    and #$f0
+    sta Player1ScoreSprite
+    ldy OnesDigitOffset+1   ; load one's digit
+    lda Digits,y
+    and #$0f
+    ora Player1ScoreSprite  ; merge one's and ten's digits
+    sta Player1ScoreSprite  ; store result in P1 score sprite
+    sta GRP1
+    ldy Player0ScoreSprite  ; preload sprite for next scanline
+    sta WSYNC
+    sty GRP0                ; update PF for P0 score display
+    inc TensDigitOffset     ; increment all digits for next line of data
+    inc TensDigitOffset+1
+    inc OnesDigitOffset
+    inc OnesDigitOffset+1
+    dex
+    bne DrawScoreboard
+    sta WSYNC
+    lda #0
+    sta GRP0
+    sta GRP1
+    sta NUSIZ0
+    sta NUSIZ1
+    rts
+
+;------------------------------------------------------------------------
+; Parse score digits (for later handling in BCD mode)
+; X - Score (0 = P0, 1 = P1)
+; Subroutine for scoreboard digits used in score for P0 and P1
+; Calculates the digit offsets for both scores.
+; Convert high and low "nibbles" of Score vars into
+; the offsets of Digits look-up table so values are displayed.
+;
+; For the low bits, we need to multiply by DIGIT_HEIGHT to get correct digit
+; row in table. We can use left bit-shifts to perform multiplications by 2:
+; For any number N, the value N * 5 = (N * 2 * 2) + N
+; e.g. n = 2
+; 8 + 2 = 10 <-- the row of the digit in the table
+;
+; For the high bits, since it's already * 16 (since it's already hexadecimal),
+; we need to divide by 16 and then multiply by DIGIT_HEIGHT.
+; - use right bit-shifts to perform division by 2
+; - for any number N, the value of (N / 16) * 5 = (N / 2 / 2) + (N / 2 / 2 / 2 / 2)
+; e.g. n = 2
+; (2 / 4) + (2 / 16) = 10 / 16 = (5 / 8) = .625
+;-----------------------------------------------------------------------
+ParseScoreDigits subroutine
+    ldx #1                  ; loop counter (P1 score is calculated first)
+.ParseDigits
+    lda Player0Score,x      ; load current score value
+    and #$0f                ; isolate one's digit (lo-nibble)
+    sta ScoreTemp           ; store value in temp var
+    asl                     ; get the one's digit (n * 4)
+    asl
+    adc ScoreTemp           ; (+ n)
+    sta OnesDigitOffset,x
+    lda Player0Score,x
+    and #$f0                ; isolate the ten's digit (hi-nibble)
+    lsr                     ; n / 4
+    lsr
+    sta ScoreTemp
+    lsr                     ; n / 16
+    lsr
+    adc ScoreTemp           ; add temp value to A (n / 4 + n / 16)
+    sta TensDigitOffset,x
+    dex                     ; load next score
+    bpl .ParseDigits
+    rts
+
 ;===========================================================================
-; Data
+; Data Tables
 ;===========================================================================
     align $100              ; ensure data doesn't cross page boundary
 
-; Scoreboard digits (0-9, 8x8 pixels)
-DigitFontTable:
-	.hex 003c6666766e663c007e181818381818
-    .hex 007e60300c06663c003c66061c06663c
-    .hex 0006067f661e0e06003c6606067c607e
-    .hex 003c66667c60663c00181818180c667e
-    .hex 003c66663c66663c003c66063e66663c
+Digits:
+    .byte %01110111          ; ### ###
+    .byte %01010101          ; # # # #
+    .byte %01010101          ; # # # #
+    .byte %01010101          ; # # # #
+    .byte %01110111          ; ### ###
+
+    .byte %00010001          ;   #   #
+    .byte %00010001          ;   #   #
+    .byte %00010001          ;   #   #
+    .byte %00010001          ;   #   #
+    .byte %00010001          ;   #   #
+
+    .byte %01110111          ; ### ###
+    .byte %00010001          ;   #   #
+    .byte %01110111          ; ### ###
+    .byte %01000100          ; #   #
+    .byte %01110111          ; ### ###
+
+    .byte %01110111          ; ### ###
+    .byte %00010001          ;   #   #
+    .byte %00110011          ;  ##  ##
+    .byte %00010001          ;   #   #
+    .byte %01110111          ; ### ###
+
+    .byte %01010101          ; # # # #
+    .byte %01010101          ; # # # #
+    .byte %01110111          ; ### ###
+    .byte %00010001          ;   #   #
+    .byte %00010001          ;   #   #
+
+    .byte %01110111          ; ### ###
+    .byte %01000100          ; #   #
+    .byte %01110111          ; ### ###
+    .byte %00010001          ;   #   #
+    .byte %01110111          ; ### ###
+
+    .byte %01110111          ; ### ###
+    .byte %01000100          ; #   #
+    .byte %01110111          ; ### ###
+    .byte %01010101          ; # # # #
+    .byte %01110111          ; ### ###
+
+    .byte %01110111          ; ### ###
+    .byte %00010001          ;   #   #
+    .byte %00010001          ;   #   #
+    .byte %00010001          ;   #   #
+    .byte %00010001          ;   #   #
+
+    .byte %01110111          ; ### ###
+    .byte %01010101          ; # # # #
+    .byte %01110111          ; ### ###
+    .byte %01010101          ; # # # #
+    .byte %01110111          ; ### ###
+
+    .byte %01110111          ; ### ###
+    .byte %01010101          ; # # # #
+    .byte %01110111          ; ### ###
+    .byte %00010001          ;   #   #
+    .byte %01110111          ; ### ###
 
 ;===========================================================================
 ; Complete ROM
