@@ -112,10 +112,11 @@ TensDigitOffset .word
 ;-----------------------------------------------------------------------
 ; Constants
 ;-----------------------------------------------------------------------
-SCANLINE_COUNT = 96 - 14         ; 2-line kernel; 192 / 2 = 96
+SCOREBOARD_HEIGHT = 14
+SCANLINE_COUNT = 96 - SCOREBOARD_HEIGHT         ; 2-line kernel; 192 / 2 = 96
 SCREEN_X_MIN = 0            ; optical left edge of screen
 SCREEN_X_MAX = 160          ; optical right edge of screen
-SCREEN_Y_MAX = 81           ; optical top of the screen
+SCREEN_Y_MAX = 80           ; optical top of the screen
 SCREEN_Y_MIN = 4            ; optical bottom of the screen
 
 PLAYER_HEIGHT = 16
@@ -245,7 +246,7 @@ OutputVBlank:
     ldx #1                  ; 2
     jsr HandleObjXPosition  ; 39
 
-    lda #COLOR_GREEN        ; 2, set background color
+    lda #0                  ; 2, set background color
     sta COLUBK              ; 3
     lda #COLOR_YELLOW       ; 2, set ball color
     sta COLUPF              ; 3
@@ -306,26 +307,34 @@ VisibleScanlines:           ; 78
     sta COLUBK
 OutputOverscan:
     ; TIMER_SETUP 29
-    TIMER_SETUP 29           ; use timer instead of iterating over each scanline
+    TIMER_SETUP 40           ; use timer instead of iterating over each scanline
 
 ;===========================================================================
 ; Handle Ball collisions with screen (update ball y-velocity)
 ; X - ball y-position
+; Y - audio control
 ; A - ball y-velocity (+1 or -1)
 ;===========================================================================
 HandleScreenCollision:
     ldx BallY               ; load ball y-position in X
+    ldy #%00001011
+    lda #%11111000
+    sta AUDF0
     lda #$ff                ; 2, load negative y-velocity (-1) in A
     cpx #SCREEN_Y_MAX       ; is ball at top of screen?
     bcs .UpdateBallYVel
-
     lda #1                  ; 2, load positive y-velocity (1) in A
     cpx #SCREEN_Y_MIN       ; is ball at bottom of screen?
     bcc .UpdateBallYVel
-
+    ldy #0
     lda BallYVel            ; load current y-velocity value
 .UpdateBallYVel:
     sta BallYVel            ; set ball y-velocity to either -1, 1 or its current value
+    cpy #0
+    bne .PlayAudio
+.PlayAudio:
+    sty AUDC0
+    sty AUDV0
 
 ;===========================================================================
 ; Handle Ball collision with "goal" (screen left, right)
@@ -374,13 +383,13 @@ HandleGoalCollision:
 ; - if collides with P0, set x-velocity to positive
 ;===========================================================================
 HandlePlayerCollision:
+    ldy #0
     lda BallXVel            ; 3, load current x-velocity in A
     bmi .HandleBallMoveLeft ; 2, is ball moving left?
-
     lda #%01000000          ; 2, has ball collided with P1?
     bit CXP1FB              ; 3
     bvc .NoPlayerCollision  ; 2
-
+    ldy #%00011101
     lda #$d0                ; 2, update x-velocity to negative value
     sta BallXVel            ; 3
     lda #0                  ; 2, reset goal frame counter and update target frames
@@ -391,7 +400,7 @@ HandlePlayerCollision:
     lda #%01000000          ; 2, has ball collided with P0?
     bit CXP0FB              ; 3
     bvc .NoPlayerCollision  ; 2
-
+    ldy #%00011101
     lda #$30                ; 2, update x-velocity to positive value
     sta BallXVel            ; 3
     lda #0                  ; 2, reset goal frame counter
@@ -399,6 +408,8 @@ HandlePlayerCollision:
     lda #PLAYER_TO_GOAL_FRAMES
     sta GoalFrameTarget
 .NoPlayerCollision:
+    sty AUDC0
+    sty AUDV0
     sta CXCLR               ; 3, clear collision registers
 
 ;===========================================================================
