@@ -1,8 +1,8 @@
 all:
-	dasm main.asm -f3 -v0 -ocart.bin
+	dasm main.asm -f3 -v0 -opong.bin
 
 run:
-	stella cart.bin
+	stella pong.bin
 
 debug:
-	stella -debug cart.bin
+	stella -debug pong.bin

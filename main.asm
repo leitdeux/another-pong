@@ -1,76 +1,17 @@
-	processor 6502
-
-;===========================================================================
-; Include required files
-;===========================================================================
-    .include "include/vcs.h"
-    .include "include/macro.h"
-    .include "include/timer.h"
 ;===========================================================================
 ; Pong
 ;
 ; Features:
 ; 2 players
-; ball
-; center line
-; collisions
-; movement
 ; scoreboard
 ; sound effects (collision, score)
-;
-; Stretch goals:
-; - title screen
-; - increase ball speed as scores increase
-
-; TODO:
-; 1. -- draw players
-; DONE - draw player 0
-; DONE - draw player 1
-; DONE - set y-position
-; DONE - set x-position
-; DONE - generalize player drawing
-; 2. -- move players
-; DONE - p0 down, up
-; DONE - p1 down, up
-; DONE - generalize player input
-; 3. -- draw ball
-; DONE - set x-position (fine)
-; DONE - draw at y-position
-; 3a. -- refactor player x-pos offset
-; DONE - create general subroutine for settings x-pos offset
-; DONE - use it directly after vblank
-; 4. -- move ball
-; DONE - horizontal, vertical
-; DONE - velocity
-; 5. -- handle ball collisions with screen top, bottom
-; DONE - top
-; DONE - bottom
-; 6. -- handle collisions between p0,p1 and ball
-; DONE - p0
-; DONE - p1
-; 7. -- handle collision with screen left, right
-; DONE - reset ball position
-; DONE - reset ball velocity
-; DONE - update p0,p1 scores on collision
-; 8. -- draw tennis net in center of screen
-; DONE - enable M0
-; DONE - draw with vertical gaps in between
-; 9. -- implement scoreboard
-; DONE - use PF
-; DONE - improve horizontal positioning of scoreboard
-; DONE - try with sprites?
-; DONE - increment scores
-; 9. -- improve draw timing, movement updates (prevent inconsistent draw updates during h&v movement)
-; 10. -- sound effects
-; - first/next ball
-; - player collision
-; - screen collision
-; - goal collision
-; - fix draw priority of missile vs ball so ball appears in front of missile
-; 11. -- implement rng
-; - set, reset ball velocity with random value
-; 12. -- delay next ball for a few frames after goal
 ;===========================================================================
+
+	processor 6502
+
+    .include "includes/vcs.h"
+    .include "includes/macro.h"
+    .include "includes/timer.h"
 
 ;===========================================================================
 ; Declare variables starting from memory address $80
@@ -185,15 +126,6 @@ Start:
     sta WSYNC               ; 3, clear horiz. motion registers
     sta HMCLR               ; 3
 
-    ; ; set initial player positions after scoreboard draw
-    ; lda Player0X            ; 3, handle P0 x-position
-    ; ldx #0                  ; 2
-    ; jsr HandleObjXPosition  ; 39
-
-    ; lda Player1X            ; 3, handle P1 x-position
-    ; ldx #1                  ; 2
-    ; jsr HandleObjXPosition  ; 39
-
     lda BallX               ; 3, handle Ball x-position
     ldx #4                  ; 2
     jsr HandleObjXPosition  ; 39
@@ -258,7 +190,7 @@ OutputVBlank:
 ; Visible scanlines
 ;===========================================================================
 DrawGame:
-    ; FIXME -- improve drawing routines so that setup consistently occurs during h-blank period
+    ; FIXME: -- improve drawing routines so that setup consistently occurs during h-blank period
     lda ScanlineCount       ; 3, load visible scanline count
 VisibleScanlines:           ; 78
     ldx #0                  ; 2, draw P0
@@ -268,7 +200,7 @@ VisibleScanlines:           ; 78
     lda ScanlineCount       ; 3, restore scanline value for next player draw
     ldx #1                  ; 2, draw P1
     jsr HandlePlayerDraw    ; 34
-.HandleMissileDraw:
+.HandleMissileDraw:         ; draws the centered "tennis net"
     ldx #0                  ; 2, value for disabling M0 graphics
     lda #4                  ; 2, the vertical width of M0 when AND-ed with ScanlineCount
     bit ScanlineCount
@@ -279,8 +211,8 @@ VisibleScanlines:           ; 78
     lda ScanlineCount       ; 3, load current scanline
 .HandleBallDraw:
     ldx #BALL_SIZE          ; 2, load ball width in X
-    ldy #%00000010          ; 2, load ball graphics enable value in Y
-    sec                     ; 2, set carry flag before subtract
+    ldy #%00000010          ; 2, load ball-graphics-enable value in Y
+    sec                     ; 2, set carry flag before subtraction
     sbc BallY               ; 3, subtract ball y-position from current scanline count
     cmp #BALL_HEIGHT        ; 2, is ball found in scanline?
     bcc .DrawBall           ; 2
@@ -362,10 +294,10 @@ HandleGoalCollision:
     ldy #$30                ; if x-velocity is negative, set positive and update P1 score
     ldx #1
     lda BallXVel
-    bmi .ReverseXVelocity
+    bmi .ReflectXVel
     ldy #$d0                ; if x-velocity is positive, set negative and update P0 score
     ldx #0
-.ReverseXVelocity:
+.ReflectXVel:
     sty BallXVel
     sed                     ; 2, enable BCD
     lda Player0Score,x      ; 4
