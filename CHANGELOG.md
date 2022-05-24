@@ -1,3 +1,6 @@
+# 1.0.1 (May 24, 2022)
+*  2573338 Update Makefile commands and README.md
+
 # 1.0.0 (May 24, 2022)
 *  9b53283 Extract game loop, subroutines and data tables into own modules
 *  b5861ee Implement sounds and use higher timer interval for overscan period
