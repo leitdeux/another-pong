@@ -1,27 +1,12 @@
+;===========================================================================
+; Another Pong - by Elliott Fiedler (@leitdeux)
+; main.asm
+;===========================================================================
 	processor 6502
 
-;===========================================================================
-; Include required files
-;===========================================================================
-    include "include/vcs.h"
-    include "include/macro.h"
-
-;===========================================================================
-; Pong
-;
-; Features:
-; 2 players
-; ball
-; center line
-; collisions
-; movement
-; scoreboard
-; sound effects (collision, score)
-;
-; Stretch goals:
-; - title screen
-; - increase velocity as scores increase
-;===========================================================================
+    .include "includes/vcs.h"
+    .include "includes/macro.h"
+    .include "includes/timer.h"
 
 ;===========================================================================
 ; Declare variables starting from memory address $80
@@ -33,42 +18,65 @@
 ; Variables
 ;-----------------------------------------------------------------------
 ScanlineCount .byte         ; number of visible scanlines
+
+Player0X .byte              ; P0 x-position
+Player1X .byte              ; P1 x-position
 Player0Y .byte              ; P0 y-position
 Player1Y .byte              ; P1 y-position
+
 BallX .byte                 ; ball x-position
 BallY .byte                 ; ball y-position
+BallXVel .byte              ; ball x velocity (signed)
+BallYVel .byte              ; ball y velocity (signed)
+BallXFrac .byte             ; ball x fractional value
+                            ; BallXVel is added to BallXFrac so that the Ball
+                            ; can move in incremenets less than 1px per frame
+
+GoalFrameCount .byte        ; the current number of frames elapsed since a goal was made
+GoalFrameTarget .byte       ; max # of frames until reaching a goal
+
+Player0Score .byte          ; score of P0, 2 digits stored as binary-coded decimal (BCD)
+Player1Score .byte          ; score of P1, 2 digits (BCD)
+ScoreTemp .byte             ; temporary value used in score parsing
+
+Player0ScoreSprite .byte    ; score sprite of P0
+Player1ScoreSprite .byte    ; score sprite of P1
+
+OnesDigitOffset .word       ; score digit pointers
+TensDigitOffset .word
 
 ;-----------------------------------------------------------------------
 ; Constants
 ;-----------------------------------------------------------------------
-SCANLINE_COUNT = 96         ; 2-line kernel, so 192 / 2 = 96
+SCOREBOARD_HEIGHT = 14
+SCANLINE_COUNT = 96 - SCOREBOARD_HEIGHT         ; 2-line kernel; 192 / 2 = 96
+SCREEN_X_MIN = 0            ; optical left edge of screen
+SCREEN_X_MAX = 160          ; optical right edge of screen
+SCREEN_Y_MAX = 80           ; optical top of the screen
+SCREEN_Y_MIN = 4            ; optical bottom of the screen
+
 PLAYER_HEIGHT = 16
-PLAYER_Y_INIT = 47
+PLAYER_0_X_INIT = 8         ; initial P0 x-position (in pixels)
+PLAYER_1_X_INIT = 152       ; initial P1 x-position
+PLAYER_Y_INIT = 35          ; initial Player y-position
+PLAYER_Y_MAX = 65           ; max player y-position
 PLAYER_SPRITE = %00000111
 
-BALL_HEIGHT = 6
-BALL_SIZE = %00101000       ; 3 pixels
+BALL_HEIGHT = 4
+BALL_X_INIT = 88            ; initial Ball x-position (offset)
+BALL_Y_INIT = 110           ; initial Ball y-position
+BALL_SIZE = %00101100       ; set 3-pixel width and highest draw priority
+
+CENTER_TO_GOAL_FRAMES = 77  ; # of frames from screen center to a goal
+PLAYER_TO_GOAL_FRAMES = 143 ; # of frames from one player to a goal
+
+SCORE_DIGITS_HEIGHT = 5     ; the height of player score digits
 
 COLOR_WHITE = $0e
 COLOR_BLUE = $a0
 COLOR_PURPLE = $8e
 COLOR_YELLOW = $1a
-
-
-; TODO:
-; 1. -- draw players
-; DONE - draw player 0
-; DONE - draw player 1
-; DONE - set y-position
-; DONE - set x-position
-; DONE - generalize player drawing
-; 2. -- move players
-; DONE - p0 down, up
-; DONE - p1 down, up
-; DONE - generalize player input
-; 3. -- draw ball
-; 4. -- move ball
-; 5. -- handle collisions
+COLOR_GREEN = $c0
 
 ;===========================================================================
 ; Init code segment
@@ -82,223 +90,56 @@ Start:
 ;-----------------------------------------------------------------------
 ; Initialize variables
 ;-----------------------------------------------------------------------
-    lda #PLAYER_Y_INIT      ; set default y-position
-    sta Player0Y
-    sta Player1Y
-    sta BallY
+    lda #PLAYER_Y_INIT      ; 2, set default y-position
+    sta Player0Y            ; 3
+    sta Player1Y            ; 3
 
-    lda #COLOR_PURPLE        ; set player colors
-    sta COLUP0
-    lda #COLOR_YELLOW
-    sta COLUP1
+    lda #PLAYER_0_X_INIT    ; 2, set player default x-position
+    sta Player0X            ; 3
+    lda #PLAYER_1_X_INIT    ; 2
+    sta Player1X            ; 3
 
-NextFrame:
+    lda #BALL_Y_INIT        ; 2, set default ball y-position
+    sta BallY               ; 3
 
-    lsr SWCHB               ; handle game reset
-    bcc Start
+    lda #BALL_X_INIT        ; 2, set ball default x-position
+    sta BallX               ; 3
 
-    lda #SCANLINE_COUNT     ; reset visible scanline count
-    sta ScanlineCount
+    lda #1                  ; 2, set default ball velocity
+    sta BallYVel            ; 3
+    lda #$30                ; 2, set ball x-velocity to 48
+    sta BallXVel
 
-;===========================================================================
-; Output VSync, VBlank
-;===========================================================================
-    lda #2                  ; enable VBLANK, VSYNC
-    sta VBLANK
-    sta VSYNC
-
-    sta WSYNC               ; generate 3 lines of VSYNC
-    sta WSYNC
-    sta WSYNC
-
-    lda #0                  ; disable VSYNC
-    sta VSYNC
-
-    ldx #37
-OutputVBlank:
-    sta WSYNC
-    dex
-    bne OutputVBlank
-
-    lda #0                  ; disable VBLANK
-    sta VBLANK
-
-;===========================================================================
-; Visible scanlines
-;===========================================================================
-DrawGame:
-    SLEEP 12                ; set P0 x-position
-    sta RESP0
-
-    ; FIXME -- this only works with a stationary ballww
-    SLEEP 20                ; set ball x-position
-    sta RESBL
-
-    SLEEP 17                ; set P1 x-position
-    sta RESP1
-
-    lda #COLOR_BLUE         ; set background color
-    sta COLUBK
-
-    lda ScanlineCount       ; load visible scanline count
-VisibleScanlines:
-    ldx #0                  ; draw P0
-    jsr HandlePlayerDraw    ; 6
-    sta WSYNC               ; scanline (1 of 2) we sync after because we want
-                            ; P0 and P1 to be drawn on the same line
-    lda ScanlineCount       ; restore scanline value for next player draw
-    ldx #1                  ; draw P1
-    jsr HandlePlayerDraw    ; 6
-    sta WSYNC               ; scanline (2 of 2)
-
-    ; TODO -- handle ball drawing here
-    ;lda #%00101000         ; set ball width to 3 pixels
-    ;sta CTRLPF
-    ;lda #2                  ; draw ball graphics
-    ;sta ENABL
-
-    dec ScanlineCount       ; decrement visible scanline count
-    lda ScanlineCount       ; load updated scanline count
-    bne VisibleScanlines    ; branch if all scanlines have been drawn
-
-;===========================================================================
-; Output overscan
-;===========================================================================
-    lda #2
-    sta VBLANK
-
-    ldx #29
-OutputOverscan:
-    sta WSYNC
-    dex
-    bne OutputOverscan
-
-;===========================================================================
-; Handle player input for next frame
-;===========================================================================
-    lda #%00010000          ; handle P0 input
-    ldx Player0Y            ; load P0 y-position
-    jsr HandlePlayerInput
-    stx Player0Y            ; update P0 y-position
-
-    lda #%00000001          ; handle P1 input
-    ldx Player1Y            ; load P1 y-position
-    jsr HandlePlayerInput
-    stx Player1Y            ; update P1 y-position
-
-;===========================================================================
-; Draw next frame
-;===========================================================================
-    jmp NextFrame
-
-;===========================================================================
-; Subroutines
-;===========================================================================
-;-----------------------------------------------------------------------
-; HandlePlayerDraw
-; A is current scanline count
-; X is player to draw (0 = player-0, 1 = player-1)
-; Y is player sprite value (0 if not drawn)
-;-----------------------------------------------------------------------
-HandlePlayerDraw subroutine
-    ldy #PLAYER_SPRITE      ; load player sprite in Y
-    sec                     ; set carry for subtract
-    sbc Player0Y,x          ; subtract the player-y from A
-    cmp #PLAYER_HEIGHT      ; in sprite?
-    bcc .DrawPlayer
-    ldy #0                  ; reset value in Y (don't draw player)
-.DrawPlayer:
-    clc                     ; clear carry flag
-    tya                     ; transfer sprite value in Y to A
-    ;sta WSYNC               ; scanline sync (1 of 2)
-    sta GRP0,x              ; store player-0 bitmap
-    rts                     ; 6
+    lda #0                  ; 2, init goal frame count
+    sta GoalFrameCount
+    lda #CENTER_TO_GOAL_FRAMES ; 2, set current target frame count until goal
+    sta GoalFrameTarget
 
 ;-----------------------------------------------------------------------
-; HandlePlayerInput
-; A is the bitmask which is AND-ed to detect input change
-; X is P0 or P1 y-position
+; Initialize fine x-position offsets for all motion objects (144)
 ;-----------------------------------------------------------------------
-HandlePlayerInput subroutine
-    bit SWCHA
-    bne .HandleDownInput
-    cpx #80                 ; is y-position at top of screen?
-    beq .HandleDownInput
-    inx                     ; increment y-position in X
-.HandleDownInput:
-    asl                     ; bit-shift left to test the down input
-    bit SWCHA
-    bne .HandleNoInput
-    cpx #4                  ; is y-position at bottom of screen?
-    beq .HandleNoInput
-    dex                     ; decrement y-position in X
-.HandleNoInput:
-    rts
+    sta WSYNC               ; 3, clear horiz. motion registers
+    sta HMCLR               ; 3
+
+    lda BallX               ; 3, handle Ball x-position
+    ldx #4                  ; 2
+    jsr HandleObjXPosition  ; 39
+
+    lda #BALL_X_INIT        ; 2, handle M0 x-position
+    ldx #2                  ; 2
+    jsr HandleObjXPosition  ; 39
+
+    jsr ParseScoreDigits    ; setup score digits
+
+    sta WSYNC               ; 3, sync scanline before setting horizontal registers
+    sta HMOVE               ; 3, apply *all* horizontal motion registers (HM__)
 
 ;===========================================================================
-; Data
+; Game loop, subroutines and data tables 
 ;===========================================================================
-
-Digits:
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01010101          ; # # # #
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %01110111          ; ### ###
-    .byte %01000100          ; #   #
-    .byte %01110111          ; ### ###
-
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %00110011          ;  ##  ##
-    .byte %00010001          ;   #   #
-    .byte %01110111          ; ### ###
-
-    .byte %01010101          ; # # # #
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-
-    .byte %01110111          ; ### ###
-    .byte %01000100          ; #   #
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %01110111          ; ### ###
-
-    .byte %01110111          ; ### ###
-    .byte %01000100          ; #   #
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-    .byte %00010001          ;   #   #
-
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-
-    .byte %01110111          ; ### ###
-    .byte %01010101          ; # # # #
-    .byte %01110111          ; ### ###
-    .byte %00010001          ;   #   #
-    .byte %01110111          ; ### ###
+    .include "game.asm"
+    .include "helpers.asm"
+    .include "data.asm"
 
 ;===========================================================================
 ; Complete ROM
