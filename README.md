@@ -3,9 +3,10 @@ A fully-commented Pong clone written in 6502 assembly for the Atari 2600.
 
 ## Demo
 
-<p align="center">
-  <img alt="another-pong" src="https://gfycat.com/exemplarygrotesquegroundhog" width="75%" />
-</p>
+<div style="position:relative; padding-bottom:calc(75.95% + 44px)">
+  <iframe src="https://gfycat.com/ifr/ExemplaryGrotesqueGroundhog" frameborder="0" scrolling="no" width="100%" height="100%" style="position:absolute;top:0;left:0;" allowfullscreen>
+  </iframe>
+</div>
 
 ## Features
 * Two-player support
