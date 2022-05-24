@@ -1,12 +1,9 @@
 # Another Pong
 A fully-commented Pong clone written in 6502 assembly for the Atari 2600.
 
-## Demo
-
-<div style="position:relative; padding-bottom:calc(75.95% + 44px)">
-  <iframe src="https://gfycat.com/ifr/ExemplaryGrotesqueGroundhog" frameborder="0" scrolling="no" width="100%" height="100%" style="position:absolute;top:0;left:0;" allowfullscreen>
-  </iframe>
-</div>
+<p align="center">
+  <img alt="another-pong" src="./media/another-pong.png" width="75%" />
+</p>
 
 ## Features
 * Two-player support
